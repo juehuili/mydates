@@ -10,7 +10,7 @@ const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.events',
 ].join(' ');
 
-const SESSION_KEY = 'daybridge.google-session';
+const STORAGE_KEY = 'daybridge.google-session';
 
 type GoogleTokenResponse = {
   access_token?: string;
@@ -31,6 +31,7 @@ declare global {
           initTokenClient: (config: {
             client_id: string;
             scope: string;
+            login_hint?: string;
             callback: (response: GoogleTokenResponse) => void;
             error_callback?: (error: { type?: string; message?: string }) => void;
           }) => TokenClient;
@@ -77,6 +78,7 @@ function dayBounds(date = new Date()) {
 
 export function useGoogleWorkspace() {
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  const loginHint = process.env.NEXT_PUBLIC_GOOGLE_LOGIN_HINT;
   const tokenClient = useRef<TokenClient | null>(null);
   const accessToken = useRef<string | null>(null);
   const [status, setStatus] = useState<GoogleStatus>(clientId ? 'loading' : 'unconfigured');
@@ -98,7 +100,7 @@ export function useGoogleWorkspace() {
     });
     if (!response.ok) {
       if (response.status === 401) {
-        sessionStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(STORAGE_KEY);
         accessToken.current = null;
         setStatus('ready');
       }
@@ -129,6 +131,13 @@ export function useGoogleWorkspace() {
       fetchCalendarEvents(new Date()),
     ]);
 
+    if (loginHint && profile.email.toLowerCase() !== loginHint.toLowerCase()) {
+      localStorage.removeItem(STORAGE_KEY);
+      accessToken.current = null;
+      if (window.google) window.google.accounts.oauth2.revoke(token);
+      throw new Error(`Please continue with ${loginHint}.`);
+    }
+
     const firstList = taskLists.items?.[0];
     let liveTasks: GoogleWorkspaceTask[] = [];
     if (firstList) {
@@ -151,7 +160,7 @@ export function useGoogleWorkspace() {
     setEvents(calendar);
     setStatus('connected');
     setError(null);
-  }, [fetchCalendarEvents, googleFetch]);
+  }, [fetchCalendarEvents, googleFetch, loginHint]);
 
   useEffect(() => {
     if (!clientId) return;
@@ -161,6 +170,7 @@ export function useGoogleWorkspace() {
       tokenClient.current = window.google.accounts.oauth2.initTokenClient({
         client_id: clientId,
         scope: GOOGLE_SCOPES,
+        login_hint: loginHint,
         callback: async (response) => {
           if (response.error || !response.access_token) {
             setStatus('error');
@@ -168,7 +178,7 @@ export function useGoogleWorkspace() {
             return;
           }
           const expiresAt = Date.now() + Math.max(0, Number(response.expires_in || 3600) - 60) * 1000;
-          sessionStorage.setItem(SESSION_KEY, JSON.stringify({ accessToken: response.access_token, expiresAt }));
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({ accessToken: response.access_token, expiresAt }));
           try {
             await loadWorkspace(response.access_token);
           } catch (reason) {
@@ -183,14 +193,14 @@ export function useGoogleWorkspace() {
       });
       setStatus('ready');
 
-      const saved = sessionStorage.getItem(SESSION_KEY);
+      const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         try {
           const parsed = JSON.parse(saved) as { accessToken: string; expiresAt: number };
           if (parsed.expiresAt > Date.now()) void loadWorkspace(parsed.accessToken);
-          else sessionStorage.removeItem(SESSION_KEY);
+          else localStorage.removeItem(STORAGE_KEY);
         } catch {
-          sessionStorage.removeItem(SESSION_KEY);
+          localStorage.removeItem(STORAGE_KEY);
         }
       }
     };
@@ -210,20 +220,20 @@ export function useGoogleWorkspace() {
         document.head.appendChild(script);
       }
     }
-  }, [clientId, loadWorkspace]);
+  }, [clientId, loadWorkspace, loginHint]);
 
   const connect = useCallback(() => {
     if (!clientId) { setStatus('unconfigured'); setError('Add NEXT_PUBLIC_GOOGLE_CLIENT_ID to Vercel first.'); return; }
     if (!tokenClient.current) { setError('Google sign-in is still loading.'); return; }
     setStatus('connecting');
     setError(null);
-    tokenClient.current.requestAccessToken({ prompt: 'select_account' });
-  }, [clientId]);
+    tokenClient.current.requestAccessToken({ prompt: loginHint ? '' : 'select_account' });
+  }, [clientId, loginHint]);
 
   const disconnect = useCallback(() => {
     const token = accessToken.current;
     if (token && window.google) window.google.accounts.oauth2.revoke(token);
-    sessionStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(STORAGE_KEY);
     accessToken.current = null;
     setAccount(null); setTasks([]); setEvents([]); setTaskListId(null); setError(null); setStatus(clientId ? 'ready' : 'unconfigured');
   }, [clientId]);

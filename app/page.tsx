@@ -385,7 +385,7 @@ export default function Home() {
             {google.status === 'unconfigured' && <p className="preview-note"><AlertCircle /> Google OAuth Client ID still needs to be added in Vercel.</p>}
             {google.error && <p className="oauth-error"><AlertCircle /> {google.error}</p>}
             <Button className="continue-google" onClick={google.connect} disabled={google.status === 'loading' || google.status === 'connecting'}>{google.status === 'loading' || google.status === 'connecting' ? <LoaderCircle className="spin" /> : <GoogleMark />} {google.status === 'connecting' ? 'Opening Google…' : 'Continue with Google'}</Button>
-            <p className="privacy-copy">Access is session-only. Disconnect or revoke access anytime.</p>
+            <p className="privacy-copy">This device remembers your account while Google access remains valid. Disconnect anytime.</p>
           </>}
         </DialogContent>
       </Dialog>

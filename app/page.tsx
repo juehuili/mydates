@@ -8,6 +8,7 @@ import {
   Search, Settings, Sparkles, SunMedium, X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader,
   DialogTitle, DialogTrigger,
@@ -53,9 +54,9 @@ function GoogleMark() {
   return <span className="google-mark" aria-hidden="true"><span>G</span></span>;
 }
 
-function sampleCalendarEvents() {
+function sampleCalendarEvents(date = new Date()) {
   const at = (hour: number, minutes = 0) => {
-    const value = new Date();
+    const value = new Date(date);
     value.setHours(hour, minutes, 0, 0);
     return value;
   };
@@ -81,6 +82,7 @@ export default function Home() {
   const [dayOffset, setDayOffset] = useState(0);
   const [sortByPriority, setSortByPriority] = useState(true);
   const [planned, setPlanned] = useState(false);
+  const [calendarMode, setCalendarMode] = useState<'day' | 'month'>('day');
   const [toast, setToast] = useState('');
   const [now, setNow] = useState<Date | null>(null);
 
@@ -122,7 +124,17 @@ export default function Home() {
     date.setDate(date.getDate() + dayOffset);
     return date;
   }, [dayOffset, now]);
-  const calendarEvents = dayOffset === 0 ? (google.status === 'connected' ? google.events : sampleCalendarEvents()) : [];
+  const selectedDateKey = selectedDate
+    ? `${selectedDate.getFullYear()}-${selectedDate.getMonth()}-${selectedDate.getDate()}`
+    : '';
+
+  useEffect(() => {
+    if (google.status !== 'connected' || !selectedDateKey) return;
+    const [year, month, day] = selectedDateKey.split('-').map(Number);
+    void google.loadCalendarDate(new Date(year, month, day, 12));
+  }, [google.loadCalendarDate, google.status, selectedDateKey]);
+
+  const calendarEvents = google.status === 'connected' ? google.events : sampleCalendarEvents(selectedDate || undefined);
   const timedEvents = calendarEvents.filter((event) => !event.allDay && event.end.getHours() >= 8 && event.start.getHours() < 18);
   const allDayEvents = calendarEvents.filter((event) => event.allDay);
   const openTasks = tasks.filter((task) => !task.completed);
@@ -146,6 +158,14 @@ export default function Home() {
   }, [searchQuery, tasks]);
   const displayName = google.account?.name?.split(' ')[0] || 'Jueying';
   const eyebrowDate = selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(selectedDate).toUpperCase() : 'TODAY';
+
+  const selectCalendarDate = (date?: Date) => {
+    if (!date || !now) return;
+    const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const selectedUtc = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+    setDayOffset(Math.round((selectedUtc - todayUtc) / 86_400_000));
+    setPlanned(false);
+  };
 
   const flash = (message: string, duration = 2600) => {
     setToast(message);
@@ -180,7 +200,7 @@ export default function Home() {
     setTasks((current) => current.map((item) => item.id === id ? { ...item, scheduled: item.scheduled || slot } : item));
     if (google.status === 'connected') {
       const [hourText, minuteText] = slot.split(':');
-      const start = new Date();
+      const start = new Date(selectedDate || new Date());
       let hour = Number(hourText);
       if (hour < 8) hour += 12;
       start.setHours(hour, Number(minuteText), 0, 0);
@@ -231,7 +251,7 @@ export default function Home() {
     if (google.status === 'connected') {
       await Promise.allSettled(candidates.map((task, index) => {
         const [hourText, minuteText] = slots[index].split(':');
-        const start = new Date();
+        const start = new Date(selectedDate || new Date());
         let hour = Number(hourText);
         if (hour < 8) hour += 12;
         start.setHours(hour, Number(minuteText), 0, 0);
@@ -301,18 +321,34 @@ export default function Home() {
             <button className="inline-add" onClick={() => setAddOpen(true)}><CirclePlus size={18} /> Add another task</button>
           </section>
 
-          <section className="calendar-panel" aria-label="Daily calendar">
-            <div className="calendar-heading"><div><span>{selectedDate ? new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(selectedDate) : 'Today'}</span><strong>{selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(selectedDate) : ''}</strong></div><div className="calendar-controls"><button className="view-select" onClick={() => flash('Day view selected')}>Day <ChevronDown size={13} /></button><Button variant="outline" size="icon-sm" aria-label="Calendar overview" onClick={() => flash('Calendar overview is ready')}><LayoutGrid /></Button></div></div>
-            <div className="all-day"><span>ALL DAY</span><div className="all-day-event">{allDayEvents[0]?.title || (google.status === 'connected' ? 'No all-day events' : 'Submit travel form')}</div></div>
-            <div className="timeline" onDragOver={(event) => event.preventDefault()} onDrop={() => flash('Drop complete — choose Schedule to sync the exact time')}>
-              {hourRows.map((hour) => <div className="hour-row" key={hour}><span>{hour}</span><div /></div>)}
-              {now && <div className="now-line" style={{ top: `${Math.max(0, Math.min(540, ((now.getHours() * 60 + now.getMinutes() - 480) / 60) * 54))}px` }}><span>{new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: false }).format(now)}</span><i /></div>}
-              {timedEvents.map((event, index) => {
-                const position = eventPosition(event.start, event.end);
-                return <div key={event.id} className={`event ${index % 3 === 0 ? 'event-meeting' : index % 3 === 1 ? 'event-focus' : 'event-lunch'}`} style={position}><span>{new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(event.start)}</span><strong>{event.title}</strong><small>{event.location || `${Math.round((event.end.getTime() - event.start.getTime()) / 60000)} min`}</small></div>;
-              })}
-              {planned && google.status !== 'connected' && <><div className="event event-auto" style={{ top: 356, height: 45 }}><span>1:00</span><strong>Kubernetes chapter 3</strong></div><div className="event event-auto" style={{ top: 500, height: 42 }}><span>4:00</span><strong>Practice On My Own</strong></div></>}
-            </div>
+          <section className="calendar-panel" aria-label="Calendar">
+            <div className="calendar-heading"><div><span>{selectedDate ? new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(selectedDate) : 'Today'}</span><strong>{selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(selectedDate) : ''}</strong></div><div className="calendar-controls"><button className="view-select" aria-label="Switch calendar view" onClick={() => setCalendarMode((mode) => mode === 'day' ? 'month' : 'day')}>{calendarMode === 'day' ? 'Day' : 'Month'} <ChevronDown size={13} /></button><Button variant="outline" size="icon-sm" aria-label={calendarMode === 'day' ? 'Open month calendar' : 'Open day timeline'} onClick={() => setCalendarMode((mode) => mode === 'day' ? 'month' : 'day')}><LayoutGrid /></Button></div></div>
+            {calendarMode === 'month' ? <div className="month-view">
+              <Calendar
+                mode="single"
+                selected={selectedDate || undefined}
+                onSelect={selectCalendarDate}
+                defaultMonth={selectedDate || undefined}
+                className="month-calendar"
+                classNames={{ root: 'w-full', month_grid: 'w-full' }}
+              />
+              <div className="month-agenda">
+                <div><span>SELECTED DAY</span><strong>{selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).format(selectedDate) : 'Today'}</strong><small>{calendarEvents.length ? `${calendarEvents.length} calendar event${calendarEvents.length === 1 ? '' : 's'}` : 'No events — a clear day'}</small></div>
+                <Button variant="outline" onClick={() => setCalendarMode('day')}>Open day</Button>
+              </div>
+              {calendarEvents.length > 0 && <div className="month-event-list">{calendarEvents.slice(0, 4).map((event) => <div key={event.id}><i /><span><strong>{event.title}</strong><small>{event.allDay ? 'All day' : new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(event.start)}{event.location ? ` · ${event.location}` : ''}</small></span></div>)}</div>}
+            </div> : <>
+              <div className="all-day"><span>ALL DAY</span><div className="all-day-event">{allDayEvents[0]?.title || (google.status === 'connected' ? 'No all-day events' : 'Submit travel form')}</div></div>
+              <div className="timeline" onDragOver={(event) => event.preventDefault()} onDrop={() => flash('Drop complete — choose Schedule to sync the exact time')}>
+                {hourRows.map((hour) => <div className="hour-row" key={hour}><span>{hour}</span><div /></div>)}
+                {now && dayOffset === 0 && <div className="now-line" style={{ top: `${Math.max(0, Math.min(540, ((now.getHours() * 60 + now.getMinutes() - 480) / 60) * 54))}px` }}><span>{new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: false }).format(now)}</span><i /></div>}
+                {timedEvents.map((event, index) => {
+                  const position = eventPosition(event.start, event.end);
+                  return <div key={event.id} className={`event ${index % 3 === 0 ? 'event-meeting' : index % 3 === 1 ? 'event-focus' : 'event-lunch'}`} style={position}><span>{new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(event.start)}</span><strong>{event.title}</strong><small>{event.location || `${Math.round((event.end.getTime() - event.start.getTime()) / 60000)} min`}</small></div>;
+                })}
+                {planned && google.status !== 'connected' && <><div className="event event-auto" style={{ top: 356, height: 45 }}><span>1:00</span><strong>Kubernetes chapter 3</strong></div><div className="event event-auto" style={{ top: 500, height: 42 }}><span>4:00</span><strong>Practice On My Own</strong></div></>}
+              </div>
+            </>}
             <div className="plan-card"><div className="sparkle-icon"><Sparkles size={18} /></div><div><strong>{planned ? 'Your plan is ready' : 'Make the day fit'}</strong><span>{planned ? 'Focus blocks were added around your events.' : 'Fit open tasks into your real calendar gaps.'}</span></div><Button onClick={() => void planDay()} disabled={planned || openTasks.length === 0}>{planned ? <><Check /> Planned</> : 'Plan my day'}</Button></div>
           </section>
         </div>

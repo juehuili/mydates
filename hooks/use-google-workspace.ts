@@ -108,15 +108,25 @@ export function useGoogleWorkspace() {
     return response.json() as Promise<T>;
   }, []);
 
+  const fetchCalendarEvents = useCallback(async (date: Date) => {
+    const { start, end } = dayBounds(date);
+    const calendar = await googleFetch<{ items?: Array<{ id: string; summary?: string; location?: string; start: { dateTime?: string; date?: string }; end: { dateTime?: string; date?: string } }> }>(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=${encodeURIComponent(start.toISOString())}&timeMax=${encodeURIComponent(end.toISOString())}`,
+    );
+    return (calendar.items || []).map((event) => {
+      const allDay = Boolean(event.start.date);
+      const eventStart = new Date(event.start.dateTime || `${event.start.date}T00:00:00`);
+      const eventEnd = new Date(event.end.dateTime || `${event.end.date}T00:00:00`);
+      return { id: event.id, title: event.summary || 'Busy', start: eventStart, end: eventEnd, allDay, location: event.location };
+    });
+  }, [googleFetch]);
+
   const loadWorkspace = useCallback(async (token: string) => {
     accessToken.current = token;
-    const { start, end } = dayBounds();
     const [profile, taskLists, calendar] = await Promise.all([
       googleFetch<{ email: string; name: string; picture?: string }>('https://www.googleapis.com/oauth2/v3/userinfo'),
       googleFetch<{ items?: Array<{ id: string; title: string }> }>('https://tasks.googleapis.com/tasks/v1/users/@me/lists?maxResults=20'),
-      googleFetch<{ items?: Array<{ id: string; summary?: string; location?: string; start: { dateTime?: string; date?: string }; end: { dateTime?: string; date?: string } }> }>(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=${encodeURIComponent(start.toISOString())}&timeMax=${encodeURIComponent(end.toISOString())}`,
-      ),
+      fetchCalendarEvents(new Date()),
     ]);
 
     const firstList = taskLists.items?.[0];
@@ -136,19 +146,12 @@ export function useGoogleWorkspace() {
       }));
     }
 
-    const liveEvents = (calendar.items || []).map((event) => {
-      const allDay = Boolean(event.start.date);
-      const eventStart = new Date(event.start.dateTime || `${event.start.date}T00:00:00`);
-      const eventEnd = new Date(event.end.dateTime || `${event.end.date}T00:00:00`);
-      return { id: event.id, title: event.summary || 'Busy', start: eventStart, end: eventEnd, allDay, location: event.location };
-    });
-
     setAccount(profile);
     setTasks(liveTasks);
-    setEvents(liveEvents);
+    setEvents(calendar);
     setStatus('connected');
     setError(null);
-  }, [googleFetch]);
+  }, [fetchCalendarEvents, googleFetch]);
 
   useEffect(() => {
     if (!clientId) return;
@@ -232,6 +235,16 @@ export function useGoogleWorkspace() {
     catch (reason) { setStatus('error'); setError(reason instanceof Error ? reason.message : 'Sync failed.'); }
   }, [loadWorkspace]);
 
+  const loadCalendarDate = useCallback(async (date: Date) => {
+    if (!accessToken.current) return;
+    try {
+      setEvents(await fetchCalendarEvents(date));
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not load this calendar date.');
+    }
+  }, [fetchCalendarEvents]);
+
   const createTask = useCallback(async (title: string) => {
     if (!taskListId) throw new Error('No Google Tasks list is available.');
     const created = await googleFetch<{ id: string; title: string; status?: string }>(
@@ -262,5 +275,5 @@ export function useGoogleWorkspace() {
     return event;
   }, [googleFetch]);
 
-  return { clientId, status, account, tasks, events, error, connect, disconnect, refresh, createTask, setTaskCompleted, createCalendarBlock };
+  return { clientId, status, account, tasks, events, error, connect, disconnect, refresh, loadCalendarDate, createTask, setTaskCompleted, createCalendarBlock };
 }

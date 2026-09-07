@@ -27,6 +27,13 @@ type Task = {
   googleListId?: string;
 };
 
+type View = 'today' | 'inbox' | 'upcoming' | 'all' | 'work' | 'learn' | 'music' | 'travel';
+
+const viewTitles: Record<View, string> = {
+  today: 'Today', inbox: 'Inbox', upcoming: 'Upcoming', all: 'All tasks',
+  work: 'Work', learn: 'Learn', music: 'Music', travel: 'Travel',
+};
+
 const initialTasks: Task[] = [
   { id: 'sample-1', title: 'Finish CDC pipeline', project: 'Work', duration: 90, priority: 'High', scheduled: '10:00', source: 'local' },
   { id: 'sample-2', title: 'Kubernetes chapter 3', project: 'Learn', duration: 45, priority: 'Medium', source: 'local' },
@@ -66,6 +73,13 @@ export default function Home() {
   const [filter, setFilter] = useState<'All' | 'Open' | 'Done'>('All');
   const [addOpen, setAddOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeView, setActiveView] = useState<View>('today');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [dayOffset, setDayOffset] = useState(0);
+  const [sortByPriority, setSortByPriority] = useState(true);
   const [planned, setPlanned] = useState(false);
   const [toast, setToast] = useState('');
   const [now, setNow] = useState<Date | null>(null);
@@ -75,6 +89,17 @@ export default function Home() {
     updateClock();
     const timer = window.setInterval(updateClock, 60_000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -91,22 +116,46 @@ export default function Home() {
     })));
   }, [google.status, google.tasks]);
 
-  const calendarEvents = google.status === 'connected' ? google.events : sampleCalendarEvents();
+  const selectedDate = useMemo(() => {
+    if (!now) return null;
+    const date = new Date(now);
+    date.setDate(date.getDate() + dayOffset);
+    return date;
+  }, [dayOffset, now]);
+  const calendarEvents = dayOffset === 0 ? (google.status === 'connected' ? google.events : sampleCalendarEvents()) : [];
   const timedEvents = calendarEvents.filter((event) => !event.allDay && event.end.getHours() >= 8 && event.start.getHours() < 18);
   const allDayEvents = calendarEvents.filter((event) => event.allDay);
   const openTasks = tasks.filter((task) => !task.completed);
   const totalMinutes = openTasks.reduce((sum, task) => sum + task.duration, 0);
-  const filteredTasks = useMemo(
-    () => tasks.filter((task) => filter === 'All' || (filter === 'Done' ? task.completed : !task.completed)),
-    [filter, tasks],
-  );
+  const filteredTasks = useMemo(() => {
+    const priorityRank = { High: 0, Medium: 1, Low: 2 };
+    return tasks
+      .filter((task) => {
+        if (filter !== 'All' && (filter === 'Done') !== Boolean(task.completed)) return false;
+        if (activeView === 'upcoming' && !task.scheduled) return false;
+        if (['work', 'learn', 'music', 'travel'].includes(activeView) && task.project.toLowerCase() !== activeView) return false;
+        return true;
+      })
+      .sort((a, b) => sortByPriority
+        ? priorityRank[a.priority] - priorityRank[b.priority]
+        : a.title.localeCompare(b.title));
+  }, [activeView, filter, sortByPriority, tasks]);
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return query ? tasks.filter((task) => `${task.title} ${task.project}`.toLowerCase().includes(query)) : tasks.slice(0, 5);
+  }, [searchQuery, tasks]);
   const displayName = google.account?.name?.split(' ')[0] || 'Jueying';
-  const dateLabel = now ? new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(now) : 'Today';
-  const eyebrowDate = now ? new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(now).toUpperCase() : 'TODAY';
+  const eyebrowDate = selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(selectedDate).toUpperCase() : 'TODAY';
 
   const flash = (message: string, duration = 2600) => {
     setToast(message);
     window.setTimeout(() => setToast(''), duration);
+  };
+
+  const navigate = (view: View) => {
+    setActiveView(view);
+    setFilter(view === 'upcoming' ? 'Open' : 'All');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const toggleTask = async (id: string) => {
@@ -199,33 +248,30 @@ export default function Home() {
   };
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''}`}>
       <aside className="sidebar">
-        <div className="brand-row"><div className="brand-mark"><Check size={15} strokeWidth={3} /></div><span className="brand-name">Daybridge</span><button className="icon-button sidebar-collapse" aria-label="Collapse sidebar"><PanelLeftClose size={17} /></button></div>
-        <button className="search-button"><Search size={16} /><span>Search</span><kbd>⌘ K</kbd></button>
+        <div className="brand-row"><div className="brand-mark"><Check size={15} strokeWidth={3} /></div><span className="brand-name">Daybridge</span><button className="icon-button sidebar-collapse" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setSidebarCollapsed((value) => !value)}><PanelLeftClose size={17} /></button></div>
+        <button className="search-button" onClick={() => setSearchOpen(true)}><Search size={16} /><span>Search</span><kbd>⌘ K</kbd></button>
         <nav className="nav-list" aria-label="Main navigation">
-          <a className="nav-item active" href="#today"><SunMedium size={17} /><span>Today</span><span className="nav-count">{openTasks.length}</span></a>
-          <a className="nav-item" href="#inbox"><Inbox size={17} /><span>Inbox</span><span className="nav-count">{tasks.length}</span></a>
-          <a className="nav-item" href="#upcoming"><CalendarDays size={17} /><span>Upcoming</span></a>
-          <a className="nav-item" href="#all"><ListTodo size={17} /><span>All tasks</span></a>
+          <button aria-label="Today" className={`nav-item ${activeView === 'today' ? 'active' : ''}`} onClick={() => navigate('today')}><SunMedium size={17} /><span>Today</span><span className="nav-count">{openTasks.length}</span></button>
+          <button aria-label="Inbox" className={`nav-item ${activeView === 'inbox' ? 'active' : ''}`} onClick={() => navigate('inbox')}><Inbox size={17} /><span>Inbox</span><span className="nav-count">{tasks.length}</span></button>
+          <button aria-label="Upcoming" className={`nav-item ${activeView === 'upcoming' ? 'active' : ''}`} onClick={() => navigate('upcoming')}><CalendarDays size={17} /><span>Upcoming</span></button>
+          <button aria-label="All tasks" className={`nav-item ${activeView === 'all' ? 'active' : ''}`} onClick={() => navigate('all')}><ListTodo size={17} /><span>All tasks</span></button>
         </nav>
         <div className="sidebar-section">
           <div className="section-label"><span>Projects</span><Plus size={14} /></div>
-          <a className="nav-item" href="#work"><span className="project-dot blue" /><span>Work</span><span className="nav-count">8</span></a>
-          <a className="nav-item" href="#learn"><span className="project-dot purple" /><span>Learn</span><span className="nav-count">3</span></a>
-          <a className="nav-item" href="#music"><span className="project-dot orange" /><span>Music</span><span className="nav-count">2</span></a>
-          <a className="nav-item" href="#travel"><span className="project-dot green" /><span>Travel</span><span className="nav-count">5</span></a>
+          {(['work', 'learn', 'music', 'travel'] as const).map((project) => <button aria-label={viewTitles[project]} key={project} className={`nav-item ${activeView === project ? 'active' : ''}`} onClick={() => navigate(project)}><span className={`project-dot ${project === 'work' ? 'blue' : project === 'learn' ? 'purple' : project === 'music' ? 'orange' : 'green'}`} /><span>{viewTitles[project]}</span><span className="nav-count">{tasks.filter((task) => task.project.toLowerCase() === project).length}</span></button>)}
         </div>
         <div className="sidebar-bottom">
           <button className="nav-item connect-row" onClick={() => setConnectOpen(true)}><GoogleMark /><span>{google.status === 'connected' ? 'Google connected' : 'Connect Google'}</span></button>
-          <button className="nav-item"><Settings size={17} /><span>Settings</span></button>
+          <button className="nav-item" onClick={() => setSettingsOpen(true)}><Settings size={17} /><span>Settings</span></button>
           <div className="profile"><div className="avatar">{displayName.slice(0, 2).toUpperCase()}</div><div><strong>{displayName}</strong><span>{google.account?.email || 'Personal workspace'}</span></div><MoreHorizontal size={17} /></div>
         </div>
       </aside>
 
       <section className="workspace" id="today">
         <header className="topbar">
-          <div className="date-nav"><Button variant="ghost" size="icon-sm" aria-label="Previous day"><ArrowLeft /></Button><button className="date-button">Today <ChevronDown size={14} /></button><Button variant="ghost" size="icon-sm" aria-label="Next day"><ArrowRight /></Button></div>
+          <div className="date-nav"><Button variant="ghost" size="icon-sm" aria-label="Previous day" onClick={() => setDayOffset((value) => value - 1)}><ArrowLeft /></Button><button className="date-button" onClick={() => setDayOffset(0)}>{dayOffset === 0 ? 'Today' : selectedDate ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(selectedDate) : 'Today'} <ChevronDown size={14} /></button><Button variant="ghost" size="icon-sm" aria-label="Next day" onClick={() => setDayOffset((value) => value + 1)}><ArrowRight /></Button></div>
           <div className="top-actions">
             <span className={`sync-status ${google.status === 'connected' ? 'connected' : ''}`}><span /> {google.status === 'connected' ? 'Synced with Google' : 'Local mode'}</span>
             <Button variant="outline" className="google-button" onClick={() => setConnectOpen(true)}><GoogleMark /> {google.status === 'connected' ? google.account?.email : 'Connect Google'}</Button>
@@ -236,7 +282,7 @@ export default function Home() {
         <div className="content-grid">
           <section className="tasks-panel">
             <div className="day-heading">
-              <div><p className="eyebrow">{eyebrowDate}</p><h1>Good morning, {displayName} <span>☀</span></h1><p>You have <strong>{openTasks.length} tasks</strong> and <strong>{calendarEvents.length} events</strong> today.</p></div>
+              <div><p className="eyebrow">{eyebrowDate}</p><h1>{activeView === 'today' ? <>Good morning, {displayName} <span>☀</span></> : viewTitles[activeView]}</h1><p>Showing <strong>{filteredTasks.length} tasks</strong> and <strong>{calendarEvents.length} events</strong>.</p></div>
               <Dialog open={addOpen} onOpenChange={setAddOpen}>
                 <DialogTrigger render={<Button className="add-task-button" />}><Plus /> Add task</DialogTrigger>
                 <DialogContent className="task-dialog"><DialogHeader><DialogTitle>Add a task</DialogTitle><DialogDescription>{google.status === 'connected' ? 'This will be added to Google Tasks.' : 'Capture it now. Connect Google to sync it.'}</DialogDescription></DialogHeader>
@@ -247,7 +293,7 @@ export default function Home() {
             </div>
 
             <div className="capacity-card"><div className="capacity-icon"><Focus size={19} /></div><div className="capacity-copy"><div><strong>Today’s capacity</strong><span>{Math.floor(totalMinutes / 60)}h {totalMinutes % 60}m of tasks · 4h 20m free</span></div><div className="capacity-track"><span style={{ width: `${Math.min(100, (totalMinutes / 260) * 100)}%` }} /></div></div><span className="capacity-note">{totalMinutes > 260 ? 'A little ambitious' : 'Nicely balanced'}</span></div>
-            <div className="task-toolbar"><div className="filter-tabs">{(['All', 'Open', 'Done'] as const).map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item}</button>)}</div><button className="sort-button">Priority <ChevronDown size={14} /></button></div>
+            <div className="task-toolbar"><div className="filter-tabs">{(['All', 'Open', 'Done'] as const).map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item}</button>)}</div><button className="sort-button" onClick={() => setSortByPriority((value) => !value)}>{sortByPriority ? 'Priority' : 'Name'} <ChevronDown size={14} /></button></div>
             <div className="task-list">
               {filteredTasks.map((task) => <article key={task.id} className={`task-row ${task.completed ? 'completed' : ''}`} draggable={!task.completed} onDragEnd={() => void scheduleTask(task.id)}><button className="task-check" onClick={() => void toggleTask(task.id)} aria-label={task.completed ? `Reopen ${task.title}` : `Complete ${task.title}`}>{task.completed && <Check size={13} strokeWidth={3} />}</button><div className="task-body"><strong>{task.title}</strong><div className="task-meta"><span className={projectStyle[task.project] || projectStyle.Personal}>{task.project}</span><span><Clock3 size={12} />{task.duration < 60 ? `${task.duration}m` : `${task.duration / 60}h`}</span>{task.scheduled && <span className="scheduled"><CalendarDays size={12} />{task.scheduled}</span>}</div></div>{task.priority === 'High' && <span className="priority-dot" title="High priority" />}{!task.completed && !task.scheduled && <button className="quick-schedule" onClick={() => void scheduleTask(task.id)}>Schedule</button>}<button className="row-menu" aria-label={`More options for ${task.title}`}><MoreHorizontal size={18} /></button></article>)}
               {filteredTasks.length === 0 && <div className="empty-state"><CheckCircle2 /><strong>All clear</strong><span>{google.status === 'connected' ? 'No tasks in your first Google Tasks list.' : 'Nothing in this view.'}</span></div>}
@@ -256,7 +302,7 @@ export default function Home() {
           </section>
 
           <section className="calendar-panel" aria-label="Daily calendar">
-            <div className="calendar-heading"><div><span>{now ? new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(now) : 'Today'}</span><strong>{now ? new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(now) : ''}</strong></div><div className="calendar-controls"><button className="view-select">Day <ChevronDown size={13} /></button><Button variant="outline" size="icon-sm"><LayoutGrid /></Button></div></div>
+            <div className="calendar-heading"><div><span>{selectedDate ? new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(selectedDate) : 'Today'}</span><strong>{selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(selectedDate) : ''}</strong></div><div className="calendar-controls"><button className="view-select" onClick={() => flash('Day view selected')}>Day <ChevronDown size={13} /></button><Button variant="outline" size="icon-sm" aria-label="Calendar overview" onClick={() => flash('Calendar overview is ready')}><LayoutGrid /></Button></div></div>
             <div className="all-day"><span>ALL DAY</span><div className="all-day-event">{allDayEvents[0]?.title || (google.status === 'connected' ? 'No all-day events' : 'Submit travel form')}</div></div>
             <div className="timeline" onDragOver={(event) => event.preventDefault()} onDrop={() => flash('Drop complete — choose Schedule to sync the exact time')}>
               {hourRows.map((hour) => <div className="hour-row" key={hour}><span>{hour}</span><div /></div>)}
@@ -290,6 +336,12 @@ export default function Home() {
             <p className="privacy-copy">Access is session-only. Disconnect or revoke access anytime.</p>
           </>}
         </DialogContent>
+      </Dialog>
+      <Dialog open={searchOpen} onOpenChange={setSearchOpen}>
+        <DialogContent className="task-dialog search-dialog"><DialogHeader><DialogTitle>Search tasks</DialogTitle><DialogDescription>Find a task or project.</DialogDescription></DialogHeader><Input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} autoFocus placeholder="Search tasks…" /><div className="search-results">{searchResults.map((task) => <button key={task.id} onClick={() => { setSearchOpen(false); setSearchQuery(''); navigate('all'); flash(`Found: ${task.title}`); }}><Search size={14} /><span><strong>{task.title}</strong><small>{task.project} · {task.duration} min</small></span></button>)}{searchResults.length === 0 && <p>No matching tasks.</p>}</div></DialogContent>
+      </Dialog>
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="task-dialog settings-dialog"><DialogHeader><DialogTitle>Settings</DialogTitle><DialogDescription>Manage your Google connection and planner preferences.</DialogDescription></DialogHeader><div className="settings-row"><span><strong>Google Workspace</strong><small>{google.status === 'connected' ? google.account?.email : 'Not connected'}</small></span><Button variant="outline" onClick={() => { setSettingsOpen(false); setConnectOpen(true); }}>{google.status === 'connected' ? 'Manage' : 'Connect'}</Button></div><div className="settings-row"><span><strong>Task ordering</strong><small>{sortByPriority ? 'Priority first' : 'Alphabetical'}</small></span><Button variant="outline" onClick={() => setSortByPriority((value) => !value)}>Change</Button></div></DialogContent>
       </Dialog>
       {toast && <div className="toast-message"><CheckCircle2 size={17} />{toast}</div>}
     </main>

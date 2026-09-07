@@ -217,7 +217,7 @@ export function useGoogleWorkspace() {
     if (!tokenClient.current) { setError('Google sign-in is still loading.'); return; }
     setStatus('connecting');
     setError(null);
-    tokenClient.current.requestAccessToken({ prompt: 'consent' });
+    tokenClient.current.requestAccessToken({ prompt: 'select_account' });
   }, [clientId]);
 
   const disconnect = useCallback(() => {

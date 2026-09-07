@@ -156,7 +156,7 @@ export default function Home() {
     const query = searchQuery.trim().toLowerCase();
     return query ? tasks.filter((task) => `${task.title} ${task.project}`.toLowerCase().includes(query)) : tasks.slice(0, 5);
   }, [searchQuery, tasks]);
-  const displayName = google.account?.name?.split(' ')[0] || 'Jueying';
+  const displayName = google.account?.name?.split(' ')[0] || 'Juehui';
   const eyebrowDate = selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(selectedDate).toUpperCase() : 'TODAY';
 
   const selectCalendarDate = (date?: Date) => {

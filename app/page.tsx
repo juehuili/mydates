@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle, ArrowLeft, ArrowRight, CalendarDays, Check, CheckCircle2,
   ChevronDown, CirclePlus, Clock3, Focus, Inbox, LayoutGrid, ListTodo,
@@ -48,7 +48,8 @@ const projectStyle: Record<string, string> = {
   Music: 'bg-[#ffeadf] text-[#a65f3b]', Travel: 'bg-[#dff3e9] text-[#397962]',
   Personal: 'bg-[#fff0c9] text-[#8a6b17]', 'Google Tasks': 'bg-[#e5f0ff] text-[#3c67a3]',
 };
-const hourRows = ['8 AM', '9 AM', '10 AM', '11 AM', '12 PM', '1 PM', '2 PM', '3 PM', '4 PM', '5 PM'];
+const HOUR_HEIGHT = 54;
+const hourRows = Array.from({ length: 24 }, (_, hour) => `${String(hour).padStart(2, '0')}:00`);
 
 function GoogleMark() {
   return <span className="google-mark" aria-hidden="true"><span>G</span></span>;
@@ -85,6 +86,7 @@ export default function Home() {
   const [calendarMode, setCalendarMode] = useState<'day' | 'month'>('day');
   const [toast, setToast] = useState('');
   const [now, setNow] = useState<Date | null>(null);
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const updateClock = () => setNow(new Date());
@@ -134,8 +136,14 @@ export default function Home() {
     void google.loadCalendarDate(new Date(year, month, day, 12));
   }, [google.loadCalendarDate, google.status, selectedDateKey]);
 
+  useEffect(() => {
+    if (calendarMode !== 'day' || !timelineScrollRef.current) return;
+    const focusHour = dayOffset === 0 ? Math.max(0, new Date().getHours() - 2) : 7;
+    timelineScrollRef.current.scrollTop = focusHour * HOUR_HEIGHT;
+  }, [calendarMode, dayOffset, selectedDateKey]);
+
   const calendarEvents = google.status === 'connected' ? google.events : sampleCalendarEvents(selectedDate || undefined);
-  const timedEvents = calendarEvents.filter((event) => !event.allDay && event.end.getHours() >= 8 && event.start.getHours() < 18);
+  const timedEvents = calendarEvents.filter((event) => !event.allDay);
   const allDayEvents = calendarEvents.filter((event) => event.allDay);
   const openTasks = tasks.filter((task) => !task.completed);
   const totalMinutes = openTasks.reduce((sum, task) => sum + task.duration, 0);
@@ -262,9 +270,15 @@ export default function Home() {
   };
 
   const eventPosition = (start: Date, end: Date) => {
-    const startMinutes = start.getHours() * 60 + start.getMinutes();
-    const endMinutes = end.getHours() * 60 + end.getMinutes();
-    return { top: Math.max(0, ((startMinutes - 8 * 60) / 60) * 54), height: Math.max(32, ((endMinutes - startMinutes) / 60) * 54) };
+    const dayStart = new Date(selectedDate || start);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+    const visibleStart = Math.max(start.getTime(), dayStart.getTime());
+    const visibleEnd = Math.min(end.getTime(), dayEnd.getTime());
+    const startMinutes = (visibleStart - dayStart.getTime()) / 60_000;
+    const durationMinutes = Math.max(1, (visibleEnd - visibleStart) / 60_000);
+    return { top: (startMinutes / 60) * HOUR_HEIGHT, height: Math.max(32, (durationMinutes / 60) * HOUR_HEIGHT) };
   };
 
   return (
@@ -339,14 +353,16 @@ export default function Home() {
               {calendarEvents.length > 0 && <div className="month-event-list">{calendarEvents.slice(0, 4).map((event) => <div key={event.id}><i /><span><strong>{event.title}</strong><small>{event.allDay ? 'All day' : new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(event.start)}{event.location ? ` · ${event.location}` : ''}</small></span></div>)}</div>}
             </div> : <>
               <div className="all-day"><span>ALL DAY</span><div className="all-day-event">{allDayEvents[0]?.title || (google.status === 'connected' ? 'No all-day events' : 'Submit travel form')}</div></div>
-              <div className="timeline" onDragOver={(event) => event.preventDefault()} onDrop={() => flash('Drop complete — choose Schedule to sync the exact time')}>
-                {hourRows.map((hour) => <div className="hour-row" key={hour}><span>{hour}</span><div /></div>)}
-                {now && dayOffset === 0 && <div className="now-line" style={{ top: `${Math.max(0, Math.min(540, ((now.getHours() * 60 + now.getMinutes() - 480) / 60) * 54))}px` }}><span>{new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: false }).format(now)}</span><i /></div>}
-                {timedEvents.map((event, index) => {
-                  const position = eventPosition(event.start, event.end);
-                  return <div key={event.id} className={`event ${index % 3 === 0 ? 'event-meeting' : index % 3 === 1 ? 'event-focus' : 'event-lunch'}`} style={position}><span>{new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(event.start)}</span><strong>{event.title}</strong><small>{event.location || `${Math.round((event.end.getTime() - event.start.getTime()) / 60000)} min`}</small></div>;
-                })}
-                {planned && google.status !== 'connected' && <><div className="event event-auto" style={{ top: 356, height: 45 }}><span>1:00</span><strong>Kubernetes chapter 3</strong></div><div className="event event-auto" style={{ top: 500, height: 42 }}><span>4:00</span><strong>Practice On My Own</strong></div></>}
+              <div className="timeline-scroll" ref={timelineScrollRef} aria-label="24-hour calendar timeline">
+                <div className="timeline" onDragOver={(event) => event.preventDefault()} onDrop={() => flash('Drop complete — choose Schedule to sync the exact time')}>
+                  {hourRows.map((hour) => <div className="hour-row" key={hour}><span>{hour}</span><div /></div>)}
+                  {now && dayOffset === 0 && <div className="now-line" style={{ top: `${((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_HEIGHT}px` }}><span>{String(now.getHours()).padStart(2, '0')}:{String(now.getMinutes()).padStart(2, '0')}</span><i /></div>}
+                  {timedEvents.map((event, index) => {
+                    const position = eventPosition(event.start, event.end);
+                    return <div key={event.id} className={`event ${index % 3 === 0 ? 'event-meeting' : index % 3 === 1 ? 'event-focus' : 'event-lunch'}`} style={position}><span>{new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }).format(event.start)}</span><strong>{event.title}</strong><small>{event.location || `${Math.round((event.end.getTime() - event.start.getTime()) / 60000)} min`}</small></div>;
+                  })}
+                  {planned && google.status !== 'connected' && <><div className="event event-auto" style={{ top: 13 * HOUR_HEIGHT, height: 45 }}><span>13:00</span><strong>Kubernetes chapter 3</strong></div><div className="event event-auto" style={{ top: 16 * HOUR_HEIGHT, height: 42 }}><span>16:00</span><strong>Practice On My Own</strong></div></>}
+                </div>
               </div>
             </>}
             <div className="plan-card"><div className="sparkle-icon"><Sparkles size={18} /></div><div><strong>{planned ? 'Your plan is ready' : 'Make the day fit'}</strong><span>{planned ? 'Focus blocks were added around your events.' : 'Fit open tasks into your real calendar gaps.'}</span></div><Button onClick={() => void planDay()} disabled={planned || openTasks.length === 0}>{planned ? <><Check /> Planned</> : 'Plan my day'}</Button></div>
